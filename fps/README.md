@@ -112,3 +112,89 @@ _Табела 4. Напади на претњу T1.2._
 _Табела 5. Напади на претњу T1.3._
 
 ## 3. Анализа напада и митигације
+
+### A1.1.3 Aim Assist Enhancer
+
+#### Анализа напада
+
+Неке игре аутоматски померају играчев нишан ка непријатељу ако играч посматра непријатеља унутар неког прага. Ова функционалност се зове _aim assist_ и саставни је део многих конзолних игара, али неретко је доступна и у PC играма.
+
+Праг за _aim assist_ је конфигурабилна вредност: играчи је постављају на вредност која њима оговара. У зависности од игре, могуће је и да сервер контролише ову вредност за све клијенте.
+
+Овај напад подразумева измену прага тако да се _aim assist_ активира чак и ако играч не гледа ни приближно у правцу непријатеља. Играч у конфигурацијама игре може да промени ову вредност прага, у виду слајдера.
+
+Слајдер, као елемент графичког корисничког интерфејса, сам по себи ограничава вредност прага на неки минимум и максимум. Рањивост потиче из чињенице да се вредност прага контролише искључиво кроз GUI елемент. Напад би се онда спровео директном променом вредности прага у радној меморији, користећи алате попут _CheatEngine_ или _CodeBreaker_. Алтернативни напад би подразумевао да се у трајном складишту модификује вредност прага који потом клијент учитава при покретању.
+
+#### Анализа рањивости
+
+Претпоставимо да следећи исечак кода одговара клијентској апликацији:
+
+```c++
+bool shouldActivateAimAssist(Mat4x4 viewMatrix, Entity* self, Entity* player)
+{
+    if (self->team != player->team)
+    {
+        return false;
+    }
+
+    if (!self->isAlive() || !player->isAlive())
+    {
+        return false;
+    }
+
+    const float minDistance = 20;
+
+    Vec3 lookForward = self->getForward(viewMatrix);
+    Vec3 lookPoint = self->pos + lookForward * minDistance;
+    Vec3 deltaPos = player->pos - self->pos;
+
+    if (lookForward.dot(deltaPos) > 0)
+    {
+        return false;
+    }
+
+    float threshold = global::Client.cvars["CV_ASSITHRESH"];
+
+    if ((lookPoint - deltaPos).length() < threshold)
+    {
+        return true;
+    }
+
+    return false;
+}
+```
+
+Рањивост се налази на следећој линији кода:
+
+```c++
+float threshold = global::Client.cvars["CV_ASSITHRESH"];
+```
+
+Клијентска апликација не валидира вредност прага, већ наивно верује садржају из меморије  или са диска.
+
+#### Безбедносне контроле
+
+Довољно је урадити проверу вредности при учитавању и њено свођење на дозвољени праг. Провера се додаје одмах после читања, чиме се гарантује да ће праг имати валидну вредност пре употребе.
+
+```c++
+bool shouldActivateAimAssist(Mat4x4 viewMatrix, Entity* self, Entity* player)
+{
+    // ...
+
+    float threshold = global::Client.cvars["CV_ASSITHRESH"];
+
+    // +++++++++++++++++++++++++++++++++++++++++++++++++
+    if (threshold < CV_ASSITHRESH_MIN) {
+        threshold = CV_ASSITHRESH_MIN;
+        client_set_cvar("CV_ASSITHRESH", threshold);
+    }
+    else if (threshold > CV_ASSITHRESH_MAX) {
+        threshold = CV_ASSITHRESH_MAX;
+        client_set_cvar("CV_ASSITHRESH", threshold);
+    }
+    // _________________________________________________
+
+    // ...
+}
+
+```
