@@ -117,7 +117,7 @@ _Табела 5. Напади на претњу T1.3._
 
 #### Анализа напада
 
-Неке игре аутоматски померају играчев нишан ка непријатељу ако играч посматра непријатеља унутар неког прага. Ова функционалност се зове _aim assist_ и саставни је део многих конзолних игара, али неретко је доступна и у PC играма.
+Неке игре аутоматски померају играчев нишан ка непријатељу ако играч посматра непријатеља унутар неког прага. Ова функционалност се зове _aim assist_ и саставни је део многих конзолних игара.
 
 Праг за _aim assist_ је конфигурабилна вредност: играчи је постављају на вредност која њима оговара. У зависности од игре, могуће је и да сервер контролише ову вредност за све клијенте.
 
@@ -198,3 +198,136 @@ bool shouldActivateAimAssist(Mat4x4 viewMatrix, Entity* self, Entity* player)
 }
 
 ```
+
+### A1.1.1 Client Hook Aimbot
+
+Овакав напад подразумева инјекцију малициозног кода у клијентску апликацију. Инјектовани код чита податке примљене од сервера о положају свих играча, и на основу њих ради аутоматско циљање.
+
+#### Анализа напада
+
+##### Инјекција
+
+Потребно је натерати клијентску апликацију да покрене малициозан код. У случају када се малициозан код налази у `dll` датотеци, овај поступак се зове DLL инјекција (DLL injection), што је приказано у следећем исечку кода:
+
+```c++
+// (1)
+HANDLE hProcess = OpenProcess(...)
+
+LPVOID loadFunctionAddress = GetProcAddress(
+    GetModuleHandle("kernel32.dll"), 
+    "LoadLibraryA"
+);
+
+// (2)
+LPVOID allocatedMem = VirtualAllocEx(
+    procHandle, 
+    nullptr, 
+    MAX_PATH, 
+    MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE
+);
+
+WriteProcessMemory(
+    procHandle, 
+    allocatedMem, 
+    dllPath, 
+    MAX_PATH, 
+    nullptr
+);
+
+// (3)
+HANDLE threadHandle = CreateRemoteThread(
+    procHandle, 
+    nullptr, 
+    NULL, 
+    LPTHREAD_START_ROUTINE(loadFunctionAddress), 
+    allocatedMem, 
+    NULL, 
+    nullptr
+);
+```
+
+1) Добавља се клијентска апликација `hProcesss` и учитава системска функција `LoadLibraryA`.
+2) У виртуелну меморију клијентског процеса се уписује путања до малициозног DLL-а.
+3) Клијентски процес покреће нит у којој се учитава малициозни DLL.
+
+##### Малициозни код
+
+У наставку је описан поступак са [следећег чланка](https://bananamafia.dev/post/multihack/). Мета напада је игра `idTech3` погона за игре, који је првобитно направљен за `Quake III Arena` игру FPS жанра.
+
+У следећем исечку напада издвојен је релевантан исечак кода:
+
+```c++
+int syscall_hook(int cmd, ...)
+{
+    // (1)
+    int arg[14] = ...
+
+    switch (cmd)
+    {
+        // (2)
+        case CG_GETDEFAULTSTATE:
+            {
+                // (3)
+                centity_t* entity = (centity_t*)arg[1];
+                // (4)
+                aim(entity);
+            }
+            break;
+        default:
+            break;
+    }
+
+    // (5)
+    return syscall(cmd, arg[0], arg[1], ..., arg[13]);
+}
+
+void aim(centity_t* entity)
+{
+    v3_t point = world_to_space(ent->currentState.pos, ...);
+    INPUT Input = ...
+    SendInput(1, &Input, sizeof(INPUT));
+}
+```
+
+Клијент од сервера прима команде са променљивим бројем аргумената (1). Малициозни DLL, у случају `CG_GETDEFAULTSTATE` команде (2), извлачи позицију ентитета (3), и на основу њега шаље улазни сигнал тако да је играчев нишан центриран на тај ентитет (4). На крају се покреће оригинална функција за обрађивање команди (5). На слици 5 илустрован је ток овог напада.
+
+![img](./hook_sequence.drawio.png)
+
+_Слика 5. Дијаграм секвенце aimbot напада преко DLL инјекције._
+
+#### Анализа рањивости
+
+За разлику од многих напада на видео игре, као и напада на софтвер уопште, овде рањивост није последица лоше валидације података, багова у коду или недостатка у екстерној библиотеци.
+Постоје два велика разлога зашто је овај напад могућ, при чему је присуство сваког од њих у некој мери оправдано.
+
+Први разлог је сама **DLL инјекција** - оперативни системи користе DLL инјекцију да би подржали _hot patching_ (измену кода у процесу док је тај процес покренут) [[1]](https://signal-labs.com/windows-hotpatching-amp-process-injection/) [[2]](https://www.codeproject.com/Articles/116253/Hot-Patching-Made-Easy). Логовање акција се може радити на нивоу кернела помоћу ове технике. Измена  _legacy_ система чији изворни код није доступан је могуће преко DLL инјекције. У неким играма је ово уједно и једини начин да се имплементирају модификације (_mods_).
+
+Други разлог је природа **клијент-сервер архитектуре**. Развој игара је нестандардан процес. Многе FPS игре се заснивају на постојећим погонима, најчешће оним који је развио _id Software_ [[3]](https://upload.wikimedia.org/wikipedia/commons/6/63/Quake_-_family_tree.svg). Додатно, _QuakeWorld_ је увео иновације које су омогућиле онлајн игру  изван LAN мреже са пристојним перформансама [[4]]([омогућила](https://fabiensanglard.net/quakeSource/quakeSourceNetWork.php)). У то време су највећи изазови били кашњење (latency) и ограничен пропусни опсег. Онлајн игре су фундаментално другачије од стандардних веб апликација: само одређен подскуп нефункционалних захтева (нпр. безбедност) је могуће испунити док то не крене да нарушава перформансе.
+
+#### Безбедносне контроле
+
+Најефективнији начин контроле овог напада је провера интегритета клијента: меморија процеса се проверава за било какве модификације [[5]](https://www.ijcaonline.org/archives/volume185/number33/martinson-2023-ijca-923110.pdf). Међутим, овај приступ ефективно неомогућава играчима да модификују игру у добронамерне сврхе, у виду плагина и модова.
+
+Алтернативни приступ су драјвери на нивоу кернела (_kernel-level driver_) попут _RICOCHET_ [[6]](https://support.activision.com/articles/ricochet-overview), _Battleye_ [[7]](https://www.battleye.com/) и _Vanguard_ [[8]](https://support-valorant.riotgames.com/hc/en-us/articles/360046160933-What-is-Vanguard). Ови програми се покрећу на нивоу привилегија кернела (дакле, као системски софтвер) што им омогућава приступ и мониторинг других процеса. Главни недостатак овом виду контроле јесте што би ови драјвери могли нанети велику штету уколико би у њих развојни тим уградио процесе за шпијунирање и неовлашћено прикупљање података [[9]](https://www.osnews.com/story/131665/riot-games-maker-of-league-of-legends-installs-rootkit-with-their-new-hit-game-valorant/).
+
+
+
+# Литература
+
+[1] https://signal-labs.com/windows-hotpatching-amp-process-injection/ Датум приступа: 12.12.2024.
+
+[2] https://www.codeproject.com/Articles/116253/Hot-Patching-Made-Easy Датуп приступа: 12.12.2024.
+
+[3] https://upload.wikimedia.org/wikipedia/commons/6/63/Quake_-_family_tree.svg Датум приступа: 12.12.2024.
+
+[4] https://fabiensanglard.net/quakeSource/quakeSourceNetWork.php Датум приступа: 12.12.2024.
+
+[5] https://www.ijcaonline.org/archives/volume185/number33/martinson-2023-ijca-923110.pdf Датум приступа: 12.12.2024.
+
+[6] https://support.activision.com/articles/ricochet-overview Датум приступа: 12.12.2024.
+
+[7] https://www.battleye.com/ Датум приступа 12.12.2024.
+
+[8] https://support-valorant.riotgames.com/hc/en-us/articles/360046160933-What-is-Vanguard Датум приступа 12.12.2024.
+
+[9] https://www.osnews.com/story/131665/riot-games-maker-of-league-of-legends-installs-rootkit-with-their-new-hit-game-valorant/ Датум приступа 12.12.2024.
