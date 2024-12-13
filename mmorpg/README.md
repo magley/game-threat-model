@@ -47,15 +47,15 @@ Tabela ispod prikazuje pretnje za identifikovane resurse i bezbjednosno svojstvo
 |         | P12. Aktiviranje pretplate                               | Elevation of Privilege    |  
 | R2. Resursi svijeta servera       | P21. Kreiranje beskonačne zalihe određenih resursa       | Tampering                 |  
 | R3. Konfiguracija            | P31. Rušenje aplikacije                                  | Denial of Service         |  
-| R4. Podaci karaktera         | P41. Izmena podataka radi bržeg napredovanja             | Tampering                 |  
-|             | P42. Dobavljanje privatnih četova radi rušenja reputacije| Information Disclosure    |  
-| R5. Inventar karaktera       | P51. Dobavljanje aseta                                   | Tampering                 |  
-| R6. Game Resources           | P61. Prikaz skrivenih stvari sa mape                    | Information Disclosure    |  
-| R7. Sistem za plaćanje           | P71. Krađa novca             | Repudiation    |  
+| R4. Podaci karaktera         | P41. Manipulacija podacima radi bržeg napredovanja             | Tampering                 |  
+|             | P42. Dobavljanje privatnih četova radi rušenja reputacije| Information Disclosure    |   
+| R5. Game Resources           | P51. Prikaz skrivenih stvari sa mape                    | Information Disclosure    |  
+| R6. Sistem za plaćanje           | P61. Krađa novca             | Repudiation    |  
 
 Glavna motivacija napadača odnosno varanja u MMORPG žanru:
 - Takmičarska prednost: želja igrača da dominiraju nad drugima i budu percipirani kao vješti ili moćni unutar zajednice igre.
 - Ekonomska dobit: igrači varaju da bi stekli rijetke predmete ili valutu koje mogu prodati za profit.
 - Ušteda vremena: da zaobiđu ponavljajuće ili vremenski zahtjevne zadatke.
 
-
+![img](./napadi_mitigacije.png)
+                                                
