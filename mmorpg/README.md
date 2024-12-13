@@ -52,10 +52,16 @@ Tabela ispod prikazuje pretnje za identifikovane resurse i bezbjednosno svojstvo
 | R5. Game Resources           | P51. Prikaz skrivenih stvari sa mape                    | Information Disclosure    |  
 | R6. Sistem za plaćanje           | P61. Krađa novca             | Repudiation    |  
 
-Glavna motivacija napadača odnosno varanja u MMORPG žanru:
+Glavna motivacija napadača i varanja u MMORPG žanru:
 - Takmičarska prednost: želja igrača da dominiraju nad drugima i budu percipirani kao vješti ili moćni unutar zajednice igre.
 - Ekonomska dobit: igrači varaju da bi stekli rijetke predmete ili valutu koje mogu prodati za profit.
 - Ušteda vremena: da zaobiđu ponavljajuće ili vremenski zahtjevne zadatke.
 
+### P41.  Manipulacija podacima radi bržeg napredovanja - analiza pretnje
+
+Iduća slika daje prikaz pretnji niskog nivoa, napada i odbrambenih menanizama za odabranu pretnju.
+
 ![img](./napadi_mitigacije.png)
+                           
                                                 
+## 3. Dubinska analiza odabranih napada i mitigacija
