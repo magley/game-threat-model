@@ -17,7 +17,8 @@ komunikacija sa drugim igračima kroz četove, napredovanje kroz XP sistem i niv
 
 Slika ispod prikazuje tok podataka analiziranog modula.
 
-![img](./data-threat-flow-model.png)
+![img](./data-threat-flow-model.png) 
+*Slika 1. Dijagram toka podataka igrice MMORPG žanra*
 
 ---
 
@@ -60,8 +61,12 @@ Tabela ispod identifikuje resurse i pruža kratak opis za svaki resurs, a na sli
 | R6    | Logovi i telemetrija       | Evidencija akcija igrača.             | 
 | R7     | Sistem plaćanja   | Transakcije i povezani payment nalozi.                       | 
 
+*Tabela 1. Identifikovani resursi*
+
+
 ![img](./data-threat-flow-resources.png)
 
+*Slika 2. Dijagram toka podataka sa prikazom identifikovanih resursa*
 
 Tabela u nastavku navodi pretnje za identifikovane resurse, kao i bezbjednosno svojstvo koje se narušava pretnjom.
 
@@ -80,6 +85,8 @@ Tabela u nastavku navodi pretnje za identifikovane resurse, kao i bezbjednosno s
 |   | P62. Prisluškivanje logova radi narušavanja reputacije    |  Information Disclosure    |   
 | R7. Sistem plaćanja           | P71. Dupliranje transkacija            | Repudiation, Tampering    |  
 
+*Tabela 2. Prikaz potencijalnih pretnji visokog nivoa za identifikovane resurse*
+
 Glavna motivacija napadača i varanja u MMORPG žanru:
 - Takmičarska prednost: želja igrača da dominiraju nad drugima i budu percipirani kao vješti ili moćni unutar zajednice igre.
 - Ekonomska dobit: igrači varaju da bi stekli rijetke predmete ili valutu koje mogu prodati za profit.
@@ -90,6 +97,7 @@ Glavna motivacija napadača i varanja u MMORPG žanru:
 U nastavku analizirana je pretnja P41. - Manipulacija podacima radi bržeg napredovanja. Slika ispod daje prikaz pretnji niskog nivoa, napada i odbrambenih menanizama za odabranu pretnju.
 
 ![img](./napadi_mitigacije.png)
-                           
+
+*Slika 3. Stablo napada za pretnju P41*   
                                                 
 ## 3. Dubinska analiza odabranih napada i mitigacija
