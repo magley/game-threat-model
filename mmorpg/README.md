@@ -19,6 +19,7 @@ Slika ispod prikazuje tok podataka analiziranog modula.
 
 ![img](./data-threat-flow-model.png)
 
+---
 
 **Igrač (Player)** je eksterni entitet koji komunicira sa klijentom. Igrač šalje ulazne komande/zahtjeve koristeći klijenta. 
 
@@ -43,6 +44,7 @@ Klijent komunicira sa dva skladišta podataka: **Client Configuration** i **Game
 
 **Players Data**: skladište podataka koje sadrži podatke o svakom karakteru servera: inventar, nivo, status misija, pozicija u svijetu, spisak prijatelja i slično.
 
+---
 
 ### 1.2. Resursi i prijetnje
 
