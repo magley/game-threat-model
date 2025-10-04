@@ -172,6 +172,8 @@ U nastavku biće detaljno analizirana 3 odabrana napada i njihove mitigacije:
 2. **A42** Client Hooks
 3. **A43** Webhook Replay prilikom kupovine opreme
 
+---
+
 ### A41 Botovi za farming
 
 Botovi za farmovanje u MMORPG igricama se obično dijele na dva tipa:
@@ -257,8 +259,99 @@ Obično se koristi zajedno sa drugim mehanizmima, u ovom slučaju zajedno sa hon
 
 Često se koriste ML pristupi za treniranje modela za analizu prikupljenih podataka. Statističkim pristupom mogu da se detektuju outlier-i tako što se koriste istorijske distribucije po klasi igrača: `z = (value - mean) / stddev` -> ako `z > 4` -> stavi flag.
 
+---
+
 ### A42 Client Hook
 
+Hook je tehnika kojom se presreće tok izvršavanja funkcije u memoriji procesa, kako bi se dodao ili izmijenio kod. 
+Hookovi su česta pojava jer omogućavaju da se modifikuje ponašanje igre bez mijenjanja fajlova na disku, pošto oni direktno rade u memoriji (runtime).
+Najčešće funkcionišu tako što umjesto originalnog poziva funkcije ili rutine unutar procesa bude izvršen neki dodatni kod (hook) ili se pristup podacima izmijeni prije nego što originalna funkcija vidi podatke.
+
+#### Analiza napada
+Hook napad omogućava napadaču da manipuliše funkcijama klijenta koje komuniciraju sa serverom, npr. da promijeni xp, inventar ili druge vrijednosti koje se šalju serveru. Napadač ubaci svoju biblioteku (DLL) u memoriju procesa igre. To se u teoriji može uraditi korišćenjem legitimnih Windows mehanizama. Kod unutar te DLL biblioteke onda postavlja hook: API hook ili inline hook.
+
+- **API / IAT Hooking**:
+promjenom unosa u IAT (Import Address Table), pozivi se preusmjeravaju na drugi kod. Npr. umjesto da aplikacija zove addXP() iz mrežne biblioteke, unos u tablici se promijeni da zove našu funkciju.
+- **Inline hooking / trampolini**: 
+prepisuje prve instrukcije ciljne funkcije jmp instrukcijom ka drugom kodu (hook funkciji).
+
+U ovom napadu fokus je na inline detour hook, što je najčešći tip korišćen u igrama. Napadač prepisuje prve bajtove funkcije koja poziva API servera i dodaje skok ka svojoj funkciji.
+Napadačeva hook funkcija mijenja vrijednosti argumenata prije nego što poziv stigne do originalne funkcije.
+Drugim riječima: kada klijent pokuša da pošalje xp serveru, hook presretne taj poziv i umjesto xp = 100 postavi xp = 5000.
+
+
+#### Analiza ranjivosti
+Ranjivost najčešće nastaje kada server previše vjeruje klijentu, odnosno ako server prihvata zahtjeve bez dodatne logike za verifikaciju. Tada napadač može poslati serveru lažni zahtjev.
+
+Ranjivost se javlja tamo gdje server radi set operacije na osnovu klijentovih vrijednosti, npr:
+
+```c#
+    [HttpPost("/api/report-xp")]
+    public async Task<IActionResult> ReportXp([FromBody] ReportXpRequest req) 
+    {
+        var playerId = GetPlayerIdFromContext(); 
+        var xpReported = req.XpReported; 
+
+        await _db.ExecuteAsync("UPDATE players SET xp = xp + @xp WHERE id = @id",
+            new { xp = xpReported, id = playerId });
+
+        return Ok(new { success = true });
+    }
+```
+Ako klijent može da odredi `xpReported`, onda napadač ima direktan kanal da lažira iznose.
+
+Druga slabost je odsustvo integriteta klijentskog koda: ako klijent ne provjerava svoj hash integrity ili ne prijavljuje promjene, lako se daje prostor za runtime patching.
+
+#### Bezbjednosne kontrole
+Server treba da računa XP samostalno - klijent mu samo javlja šta je igrač uradio, ne koliko xp-a je stekao.
+To znači da se xp računa na osnovu događaja, ne brojeva iz klijenta. Server treba da bude odgovoran za svu poslovnu logiku. Na taj način, izmjena vrijednosti u klijentu ne mijenja server-side stanje. 
+
+Primjer koda ispod, umjesto korištenja direktnog  *xpReported* sa klijenta, sada prima događaj da je misija završena, provjerava validnost takvog događaja i sam računa rezultat (xp).
+
+```c#
+    [HttpPost("/api/quest-complete")]
+    public async Task<IActionResult> CompleteQuest([FromBody] QuestCompleteRequest req)
+    {
+        var playerId = GetPlayerIdFromContext();
+        var questId = req.QuestId;
+
+        var quest = await _db.QuerySingleOrDefaultAsync<Quest>("SELECT id, xp_reward FROM quests WHERE id = @q",
+            new { q = questId });
+        if (quest == null)
+            return BadRequest("unknown quest");
+
+        // Check quest state of that plazer
+        var ok = await _db.QuerySingleAsync<bool>(
+            @"SELECT CASE WHEN EXISTS(
+                SELECT 1 FROM player_quests pq 
+                WHERE pq.player_id=@pid AND pq.quest_id=@qid AND pq.status='active'
+                AND ST_DWithin(pq.last_known_pos, (SELECT pos FROM players WHERE id=@pid), @maxDistance)
+            ) THEN true ELSE false END",
+            new { pid = playerId, qid = questId, maxDistance = 50 });
+
+        if (!ok) return Forbid();
+
+        // Atomic actions
+        await _db.ExecuteAsyncInTransactionAsync(async tx =>
+        {
+            await tx.ExecuteAsync("UPDATE players SET xp = xp + @xp WHERE id = @pid",
+                new { xp = quest.XpReward, pid = playerId });
+
+            await tx.ExecuteAsync("UPDATE player_quests SET status='completed' WHERE player_id=@pid AND quest_id=@qid",
+                new { pid = playerId, qid = questId });
+
+            await tx.ExecuteAsync("INSERT INTO xp_log(player_id, xp_delta) VALUES(@pid, @xp)",
+                new { pid = playerId, xp = quest.XpReward });
+        });
+
+        return Ok(new { xpAwarded = quest.XpReward });
+    }
+```
+Ovaj pristup podrazumijeva primjenu autoritativnih servera. 
+
+Pored toga, neophodno je sprovesti i periodične provjere integriteta klijenta. Ove provere se izvršavaju lokalno na računaru igrača i podrazumijevaju verifikaciju digitalnih potpisa i hash vrednosti binarnih datoteka igre, kao i provjeru liste učitanih modula (DLL-ova) tokom rada aplikacije.
+
+Konačno, preporučuje se i instalacija anti-cheat agenata koji rade na klijentskoj strani i u realnom vremenu prate ponašanje igre, učitane module i potencijalne pokušaje modifikacije.
 
 
 ## Literatura
