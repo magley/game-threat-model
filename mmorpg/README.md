@@ -99,5 +99,68 @@ U nastavku analizirana je pretnja P41. - Manipulacija podacima radi bržeg napre
 ![img](./napadi_mitigacije.png)
 
 *Slika 3. Stablo napada za pretnju P41*   
-                                                
+
+### Botovi za Farming
+Botovi su programi ili skripte koji emuliraju akcije igrača i ponavljaju ih beskonačno dugo. U MMORPG igrama, botovi se koriste da bi se brzo generisao XP kroz repetitivne zadatke, kao što je ubijanje slabih protivnika ili skupljanje resursa. Pošto botovi mogu raditi 24/7, igrač koji ih koristi stiče ogromnu prednost nad ostalim igračima.
+
+Mitigacije:
+- **Analiza logova i ponašanja**: server prikuplja telemetriju o akcijama igrača i ritmu komandi. Ako se detektuje nerealno ponašanje (npr. igrač koji 16 sati bez prestanka ubija istog NPC-a), sistem označava nalog kao sumnjiv. Ovo je ključna mitigacija jer botovi koji imitiraju inpute često uspijevaju da prevare anti-cheat softvere.
+- **HoneyPots**: namjerno postavljena zamka koja je dizajnirana da privuče napadače ili botove. Ideja je da igrač koji igra normalno neće nikad reagovati na honeypot, ali bot koji izvršava skripte hoće. Na primjer, server kreira NPC-a koji je nevidljiv ljudima, ali postoji u kodu. Botovi će mehanički napasti takav resurs, dok ljudski igrači ne.
+- **Anti-cheat softveri**: Mogu da detektuju one botove koji vrše manipulaciju samog procesa igre. Ako bot radi izvan procesa igre (npr. emulator miša) odnosno ako ga ništa ne povezuje sa igrom u memoriji, tu softver ne pomaže. Zbog toga se tretira kao dopunska, a ne glavna mitigacija.
+
+
+### Client Hook
+Ovaj napad se odnosi na modifikaciju klijentske aplikacije igre ili umetanje dodatnog koda koji presreće i mijenja podatke koji se šalju serveru. Na primjer, napadač može manipulisati vrijednošću promjenljive koja predstavlja količinu XP-a, pa zatim poslati zahtijev serveru u kome stoji da je igrač stekao više XP-a nego što zapravo jeste.
+
+Mitigacije: 
+- **Anti-cheat softver (npr. BattleEye)**: radi na strani klijenta, prati integritet klijentskih fajlova i detektuje neautorizovane modifikacije. Ako detektuje manipulaciju, može blokirati igru ili prijaviti serveru.
+- **Authoritative server model**: server preuzima potpunu kontrolu nad obračunom XP-a,, dok klijent šalje serveru samo akciju. Na primjer, klijent neće slati "zaradio sam 30XP poena završavanjem misije" nego „završio sam misiju“, a server provjerava validnost događaja i sam računa koliko XP treba da se dodijeli.
+
+
+### Webhook replay prilikom kupovine opreme
+Napadač šalje iste zahtjeve za kupovinu (putem webhooka) kako bi duplirao ili ilegalno generisao opremu u svom inventaru.
+Kupovina itema se često obavlja putem eksternih payment provajdera. Kada kupovina prođe, provajder šalje serveru igre webhook (HTTP zahtjev sa potvrdom o uplati i detaljima transakcije). Ako server ne implementira zaštitu, napadač može snimiti jedan webhook i kasnije ga više puta poslati, čime bi za jednu uplatu dobio više itema.
+
+Mitigacije: 
+- **HMAC/Signature verification**: svaki zahtjev mora imati validan digitalni potpis kojeg server provjerava. To garantuje da zahtjev nije izmjenjen i da dolazi od legitimnog klijenta. Npr. payment provajder dodaje digitalni potpis (npr. HMAC SHA256) u zaglavlje svakog webhooka. Server provjerava potpis i odbacuje zahtjev ako je falsifikovan. Međutim, HMAC sam po sebi ne sprječava ponovno slanje istog zahtjeva, već je osnovni sloj zaštite koji sprječava falsifikovane ili izmijenjene zahtjeve. Zato se često koristi uz tkz. **Replay Window**. Ovo podrazumijeva da webhook mora sadržati timestamp trenutka slanja, koji je uključen u potpis (HMAC). Server provjerava da je timestamp unutar malog vremenskog prozora. Ako je poruka starija od toga, automatski se odbacuje. Ova mjera sprječava napadača da snimi webhook i pošalje ga ponovo kasnije.
+- **Idempotency**: osigurava da ponovljeni zahtjevi ne proizvode višestruke efekte. Svaki webhook ima jedinstveni ID transakcije. Server čuva sve procesirane ID-jeve i odbacuje duplikate. Time se sprječava višestruka obrada iste kupovine.
+
+
+### Race condition
+Napad se javlja kada dva ili više procesa istovremeno pokušaju da promijene isti resurs (npr. dodavanje nekog rijetkog predmeta u inventar), a sistem ne kontroliše redoslijed tih promjena tj ne sinhronizuje pravilno izvršavanje transakcija. Ovo rezultira dupliranjem resursa i neispravnim ažuriranjem inventara.
+
+Mitigacije: 
+- **Idempotency**: isto kao prethodno. Svaki zahtjev dobija jedinstveni identifikator. Ako server primi dva ista ID-ja, obrađuje ga samo jednom. Ovaj mehanizam eliminiše efekat dupliranja i greške.  
+- **ACID transakcije (Atomicity, Consistency, Isolation, Durability)**: na serverskoj strani garantuju da se sve operacije izvršavaju u potpunosti ili uopšte ne, čime se eliminišu posljedice race condition-a. Npr. kada igrač kupuje item, server u jednoj transakciji će radi: provjerava da li igrač ima dovoljno zlata, oduzima zlato, dodaje item u inventar. Pošto je sve ovo jedna operacija, time se sprječava da za istu količinu zlata napadač dobavi više item-a.
+
+
+### Packet Injection: 
+Napadač presreće i mijenja mrežne pakete koje klijent šalje serveru ili može zaobići klijenta i direktno slati konstruisane mrežne pakete serveru. Ako server slijepo veruje svakom paketu, napadač može na primjer ubacivati predmete za inventar bez ograničenja. Ovakav napad je posebno opasan jer se mnogo akcija oslanja na mrežnu komunikaciju između klijenta i servera.
+
+Mitigacije: 
+- **Validacija paketa na serverskoj strani**: svaki zahtjev mora proći provjeru autentifikacije, autorizacije, validacije vezane za samu logiku događaja i konzistentnosti. Ovo osigurava da svaki paket sadrži samo dozvoljene i očekivane podatke. 
+- **Rate limiting**: ograničava broj zahtjeva po klijentu ili IP adresi u određenom periodu, što pomaže da se napad ublaži i detektuje.
+
+
+### Lag Switch
+
+Napadač manipuliše svojom mrežom kako bi namjerno stvorio kašnjenja u komunikaciji između klijenta i servera. U PvP borbama to može omogućiti prednost, jer napadač može zamrznuti poziciju, a kada vrati vezu, server mu odjednom upisuje sve akcije. 
+
+Mitigacije:
+- **Anti-cheat softver (FairFight)**: sistem prati obrasce latencije i označava naloge koji često imaju sumnjive skokove u mrežnom kašnjenju praćene prednošću u igri.
+
+- **Banovanje igrača**: kada se zloupotreba potvrdi, igrač se suspenduje ili trajno banuje, što predstavlja društveni i tehnički mehanizam odvraćanja od ovakvih napada.
+
+
+### DDoS (Distributed Denial of Service)
+Masovno slanje zahtjeva ka serveru radi preopterećenja i obaranja usluge, čime se drugim igračima onemogućava normalna igra.
+
+Mitigacije:
+- **Load balancing**: raspoređuje saobraćaj ravnomjerno između servera, povećavajući otpornost infrastrukture i omogućavajući kontinuitet usluge čak i u slučaju napada.
+
+- **Rate limiting**: graničava broj zahtjeva po klijentu ili IP adresi, sprječavajući preopterećenje servera. 
+
+
+
+
 ## 3. Dubinska analiza odabranih napada i mitigacija
