@@ -100,6 +100,8 @@ U nastavku analizirana je pretnja P41. - Manipulacija podacima radi bržeg napre
 
 *Slika 3. Stablo napada za pretnju P41*   
 
+U nastavku biće kratko opisani svaki od napada iz prethodnog stabla, kao i njihove navedene mitigacije. Detaljniji opisi nekih napada biće predstavljeni u idućem poglavlju.
+
 ### Botovi za Farming
 Botovi su programi ili skripte koji emuliraju akcije igrača i ponavljaju ih beskonačno dugo. U MMORPG igrama, botovi se koriste da bi se brzo generisao XP kroz repetitivne zadatke, kao što je ubijanje slabih protivnika ili skupljanje resursa. Pošto botovi mogu raditi 24/7, igrač koji ih koristi stiče ogromnu prednost nad ostalim igračima.
 
@@ -164,3 +166,106 @@ Mitigacije:
 
 
 ## 3. Dubinska analiza odabranih napada i mitigacija
+
+U nastavku biće detaljno analizirana 3 odabrana napada i njihove mitigacije:
+1. **A41** Botovi za farming
+2. **A42** Client Hooks
+3. **A43** Webhook Replay prilikom kupovine opreme
+
+### A41 Botovi za farming
+
+Botovi za farmovanje u MMORPG igricama se obično dijele na dva tipa:
+- In-process botovi - kod radi unutar procesa igre (memory tampering). Ovi botovi su često detektovani i blokirani od strane host-based anti-cheat agenata (BattlEye), jer mijenjaju memoriju procesa ili učitavaju neautorizovane module.
+- Out-of-process botovi - ne mijenjaju proces igre. Automatizuju input (klikove, tastaturu) ili koriste computer-vision (screenshot + object detection) da pronađu resurse na ekranu. Teže se detektuju klasičnim anti-cheat agentima.
+
+Video isječak ispod predstavlja prikaz upotrebe botova radi dobavljanja resursa igrice i dodatnih xp-ova.
+
+![img](farming.gif)
+
+*Slika 4. Prikaz grupe botova koji skupljaju resurse na primjeru igrice Albion Online*  
+
+#### Analiza napada
+U ovom napadu se primjenjuje out-of-process tip bota. Funksioniše po principu image recognition-a i emulatora klika. Kod prikazan ispod je modifikovan i preuzet sa idućeg [linka](https://github.com/Spring-0/yolov8-albion-online-object-detection/blob/development/README.md). Primjer koda koristi yolo algoritam za detekciju objekata radi identifikacije i lociranja rude bakra u svijetu igre Albion Online. 
+
+```py
+def get_midpoints():
+    midpoints = []
+    model = YOLO("find_copper_model.pt")
+    results = model.predict("live/screenshot-live.png", conf=0.6, save=True)
+
+    boxes = results[0].boxes.xyxy.tolist()
+
+    for box in boxes:
+        mid_x = (box[0] + box[2]) / 2
+        mid_y = (box[1] + box[3]) / 2
+
+        midpoints.append((mid_x, mid_y))
+
+    return midpoints
+
+
+def main():
+    while True:
+        take_screenshot()
+        midpoints = get_midpoints()
+        pyautogui.click(midpoints[0][0], midpoints[0][1])
+        
+        time.sleep(13) # Wait to finish mining, adjust this accordingly.
+```
+Slika ispod prikazuje primjenu prethodnog koda za detekciju rude bakra na screenshot-u ekrana igrice.
+
+![img](farming_copper.jpg)
+
+*Slika 5. Prikaz identifikovanih resura u igri Albion Online koristeći image recognition algoritme*
+
+#### Bezbjednosne kontrole
+Out-of-process botove je dosta teže uočiti standardnim mehanizmima, i anti-cheat agenti rijetko pomažu. Neki od pokušaja njihove detekcije su upotreba honeypots mehanizama i primjena telemeterije nad prikupljenim podacima. 
+
+##### 1.  HoneyPots
+
+Sistem vrši kreiranje honeypots-ova odnosno takozvanih zamki za botove, tako što povremeno u igru ubacuje lažne resurse tj. resurse sa oznakom da su "honeypots".
+
+Primjer detekcije kada je neki igrač izvršio akciju nad honeypot resursom:
+
+```c#
+[HttpPost("/api/attack-npc")]
+public async Task<IActionResult> AttackNpc([FromBody] AttackNpcRequest req)
+{
+    var playerId = GetPlayerIdFromContext();
+    var npcId = req.NpcId;
+
+    var npc = await _db.QuerySingleOrDefaultAsync<Npc>(
+        "SELECT id, is_honeypot FROM npcs WHERE id = @id", new { id = npcId });
+
+    if (npc == null) return NotFound();
+
+    if (npc.IsHoneypot)
+    {
+        // log & flag for review
+        await _db.ExecuteAsync("INSERT INTO honeypot_hits(player_id, npc_id) VALUES(@p,@n)",
+            new { p = playerId, n = npcId });
+        await _audit.FlagAsync(playerId, "honeypot_triggered");
+
+        return Ok(new { result = "no_target" });
+    }
+
+    return Ok(new { result = "attack_registered" });
+}
+```
+##### 2. Telemetrija
+Obično se koristi zajedno sa drugim mehanizmima, u ovom slučaju zajedno sa honeypots. Telemetrija služi za analiziranje podataka sačuvanih od strane honeypot zamki, kao i praćenje drugih metrika radi detekcije sumnjivog ponašanja igrača. Može da se prati koliko sati uzastopno je igrač aktivan, koliko xp-a ili gold-a je generisao u posljednjem satu, koliko je akcija napravio u minuti i sllično. 
+
+Često se koriste ML pristupi za treniranje modela za analizu prikupljenih podataka. Statističkim pristupom mogu da se detektuju outlier-i tako što se koriste istorijske distribucije po klasi igrača: `z = (value - mean) / stddev` -> ako `z > 4` -> stavi flag.
+
+### A42 Client Hook
+
+
+
+## Literatura
+- Cybersecurity threats and attacks in the gaming industry, https://link.springer.com/book/10.1007/979-8-8688-1492-1 
+
+- MMO Security issues, https://www.igi-global.com/chapter/security-issues-massively-multiplayer-online/64261
+
+- Game bot detection, https://pmc.ncbi.nlm.nih.gov/articles/PMC4844581/
+
+- Webhook best practices, https://www.svix.com/resources/webhook-best-practices/security/
