@@ -493,8 +493,27 @@ Takođe obavezna mjera zaštite jeste **TLS** (HTTPS/WSS) komunikacija kako bi s
 ## Literatura
 - Cybersecurity threats and attacks in the gaming industry, https://link.springer.com/book/10.1007/979-8-8688-1492-1 
 
-- MMO Security issues, https://www.igi-global.com/chapter/security-issues-massively-multiplayer-online/64261
+- MMO Gaming Solution Architecture, https://www.alibabacloud.com/blog/alibaba-cloud-mmo-gaming-solution-architecture_593877
 
-- Game bot detection, https://pmc.ncbi.nlm.nih.gov/articles/PMC4844581/
+- Security Issues in Massively Multiplayer Online Games, https://www.igi-global.com/chapter/security-issues-massively-multiplayer-online/64261
 
-- Webhook best practices, https://www.svix.com/resources/webhook-best-practices/security/
+- BattlEye, https://www.battleye.com/
+
+- FairFight, https://www.i3d.net/anti-cheat-software/
+
+- Multimodal game bot detection using user behavioral characteristics, https://pmc.ncbi.nlm.nih.gov/articles/PMC4844581/
+
+- Farming bot github code, https://github.com/Spring-0/yolov8-albion-online-object-detection/blob/development/README.md
+
+- Webhook Security Best Practices, https://www.svix.com/resources/webhook-best-practices/security/
+
+- DLL injection github code, https://github.com/tasox/CSharp_Process_Injection/blob/main/01.%20Process_Injection_template_(High%20Level%20Windows%20API)/Program.cs
+
+- Detecting Hook and ROP Attacks: Methods with Examples, https://www.apriorit.com/dev-blog/536-detecting-hook-and-rop-attacks
+
+- Inline hook github code, https://github.com/alex-ilgayev/injection-hooking-samples/blob/master/sample-injection-hooking-solution/inline-hooking/hook.cpp
+
+- Fundamental Security Concepts and Best Practices Every Game Developer Should Know, https://www.imperva.com/blog/fundamental-security-concepts-and-best-practices-every-game-developer-should-know/
+
+- Rate limiting middleware in ASP.NET Core, https://learn.microsoft.com/en-us/aspnet/core/performance/rate-limit?view=aspnetcore-9.0
+
