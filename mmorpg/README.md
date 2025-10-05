@@ -168,9 +168,9 @@ Mitigacije:
 ## 3. Dubinska analiza odabranih napada i mitigacija
 
 U nastavku biće detaljno analizirana 3 odabrana napada i njihove mitigacije:
-1. **A41** Botovi za farming
-2. **A42** Client Hooks
-3. **A45** Packet Injection
+- **A41** Botovi za farming
+- **A42** Client Hooks
+- **A45** Packet Injection
 
 ---
 
@@ -392,11 +392,102 @@ Ključne slabosti koje omogućavaju ovakve napade su:
 Prvi sloj odbrane uključuje aktivaciju i pravilnu konfiguraciju sistemskih bezbjednosnih mehanizama. **ASLR** osigurava da se adrese funkcija i modula nasumično raspoređuju pri svakom pokretanju, čime se napadaču otežava predviđanje gdje se u memoriji nalazi ciljna funkcija.
 **DEP** sprječava izvršavanje koda iz memorijskih oblasti koje nisu predviđene za to, čime se onemogućava pokretanje trampolina i shellcode-a u ubrizganim segmentima.
 
-Pored toga, neophodno je sprovesti i periodične provjere integriteta klijenta. Ove provjere se izvršavaju lokalno na računaru igrača i podrazumijevaju verifikaciju digitalnih potpisa i hash vrednosti binarnih datoteka igre, kao i provjeru liste učitanih modula (DLL-ova) tokom rada aplikacije. Ukoliko se otkrije neovlašćena izmjena, sistem može da prijavi pokušaj manipulacije ili da odmah prekine rad.
+Pored toga, neophodno je sprovesti i periodične provjere **integriteta** klijenta. Ove provjere se izvršavaju lokalno na računaru igrača i podrazumijevaju verifikaciju digitalnih potpisa i hash vrednosti binarnih datoteka igre, kao i provjeru liste učitanih modula (DLL-ova) tokom rada aplikacije. Ukoliko se otkrije neovlašćena izmjena, sistem može da prijavi pokušaj manipulacije ili da odmah prekine rad.
 
-Konačno, preporučuje se i instalacija anti-cheat agenata (BattlEye) koji rade na klijentskoj strani i u realnom vremenu prate ponašanje igre. Oni detektuju pokušaje ubrizgavanja koda, modifikacije memorije i izmjene funkcija u dinamički učitanim bibliotekama.
+Konačno, preporučuje se i instalacija **anti-cheat agenata** (BattlEye) koji rade na klijentskoj strani i u realnom vremenu prate ponašanje igre. Oni detektuju pokušaje ubrizgavanja koda, modifikacije memorije i izmjene funkcija u dinamički učitanim bibliotekama.
 
 ---
+### A45 Packet Injection
+
+Packet Injection označava proces umetanja ili modifikacije mrežnih paketa u saobraćaju između klijenta i servera tako da server vjeruje da je poruka legitimna. Ako server vjeruje podacima iz klijenta bez dodatnih provjera, napadač može da:
+- presretne i ponovi legitimne poruke (**Replay Attack**) – npr. slanje iste poruke za preuzimanje nagrade više puta
+- falsifikuje pakete (**Forge Attack**) – kreiranjem sopstvenih paketa koji izgledaju kao da dolaze od klijenta
+- presretne i izmijeni pakete u prolazu (**MITM Attack**) – manipulisanjem sadržaja poruke prije nego što stigne do servera
+#### Analiza napada
+
+U MMORPG kontekstu, klijent i server neprestano razmjenjuju podatke o kretanju, inventaru, iskustvu i interakciji sa svijetom. 
+
+Ako zahtjevi nisu kriptografski potpisani (npr. HMAC), napadač može da:
+- Napadač koristi alat poput Wireshark, Fiddler ili Burp Suite da nadgleda mrežni saobraćaj između klijenta i servera
+- Analizom saobraćaja, prepoznaje HTTP/WebSocket zahtjeve koji nose važne podatke (npr. */api/add-item*)
+- Napadač potom generiše sopstveni zahtjev, modifikuje sadržaj (npr. *item: "legendary_sword", quantity: 999*) i ponovo ga šalje serveru
+- Ako server ne validira akciju, igrač dobija item koji nikada nije stvarno pronašao
+
+Ovi napadi se često automatizuju pomoću skripti koje generišu desetine zahtjeva u sekundi, što osim manipulacije resursima može dovesti i do DoS efekta na backend infrastrukturu.
+
+#### Analiza ranjivosti
+Ranjivost najčešće nastaje kada server previše vjeruje klijentu, odnosno ako server prihvata zahtjeve bez dodatne logike za verifikaciju i validaciju. Ako poruke nisu potpisane ili zaštićene (HMAC), lako ih je falsifikovati. Slanje JSON/HTTP payload-a bez potpisa omogućava napadaču da proizvede validno izgledajući paket.
+
+Primjer ranjivog server koda u situaciji kada server ne vrši validaciju pristiglih podataka:
+
+```c#
+[HttpPost("/api/add-item")]
+public async Task<IActionResult> AddItem([FromBody] AddItemRequest req)
+{
+    var playerId = GetPlayerIdFromContext();
+
+    await _db.ExecuteAsync("INSERT INTO inventory (player_id, item_id, quantity) VALUES (@p, @i, @q)",
+        new { p = playerId, i = req.ItemId, q = req.Quantity });
+
+    return Ok(new { success = true });
+}
+
+```
+
+U ovom slučaju, ako napadač pošalje lažni paket:
+```
+{ "itemId": "legendary_sword", "quantity": 999 }
+```
+
+server to prihvata kao validnu informaciju i dodaje predmet jer je autoritet nad inventarom implementiran na klijentu umjesto na serveru. Napadač može na ovaj način da šalje isti zahtjev više puta ili da doda više predmeta i manipuliše ekonomijom.
+
+
+#### Bezbjednosne kontrole
+
+##### 1. Autoritativan server
+Ključni princip odbrane je da server bude jedini izvor istine tj. da se implementira autoritativni server. To podrazumijeva da sve promjene stanja (xp, inventar, ekonomija) treba da budu izračunate ili potvrđene na strani servera. Klijent ne šalje naredbu “dodaj predmet”, već događaj koji opisuje akciju, npr. “igrač je otvorio kovčeg”.
+Server potom:
+- provjerava da li je događaj moguć 
+- računa nagradu
+- sam dodaje odgovarajući predmet u inventar
+
+Primjer autoritativnog server koda sa HMAC zaštitom:
+
+```c#
+[HttpPost("/api/action/open-chest")]
+public async Task<IActionResult> OpenChest([FromBody] PlayerActionRequest req)
+{
+    var playerId = GetPlayerIdFromContext();
+
+    var key = GetPlayerSecretKey(playerId);
+    if (!VerifyHmac(req.Payload, req.Signature, key))
+        return Forbid("Invalid signature");
+
+    var chest = await _db.QuerySingleOrDefaultAsync<Chest>("SELECT * FROM chests WHERE id=@cid AND opened=false", new { cid = req.TargetId });
+    if (chest == null)
+        return BadRequest("Invalid chest");
+
+    var distance = CalculatePlayerDistance(playerId, chest.position);
+    if (distance > 50)
+        return Forbid("Too far from chest");
+
+    var itemId = chest.RewardItemId;
+    await _db.ExecuteAsync("INSERT INTO inventory (player_id, item_id, quantity) VALUES (@pid, @item, 1)",
+        new { pid = playerId, item = itemId });
+
+    await _db.ExecuteAsync("UPDATE chests SET opened=true WHERE id=@cid", new { cid = req.TargetId });
+
+    return Ok(new { reward = itemId });
+}
+
+```
+Upotreba **HMAC (Hash-based Message Authentication Code)** osigurava da je svaki paket potpisan tajnim ključem poznatim samo serveru i klijentu. Na taj način, čak i ako napadač vidi paket, on ne može kreirati novi validan bez ključa.
+
+##### 2. Rate limiting
+
+Još jedan bezbjednosni princip jeste **rate limiting**, koji predstavlja ograničenje broja zahtjeva koje korisnik može poslati u određenom vremenskom intervalu. Implementacija rate limita sprječava flood napade, replay slanje paketa u velikim količinama, kao i DoS pokušaje. U .NET se to može postići pomoću *IAsyncRateLimit* middleware-a, koji limitira broj zahtjeva po korisniku u datom intervalu. Moguće je dodati rate limiting i samo na odabrane endpoint-e, npr. one koje smatramo kritičnim. 
+
+Takođe obavezna mjera zaštite jeste **TLS** (HTTPS/WSS) komunikacija kako bi se spriječila analiza i modifikacija paketa u mrežnom saobraćaju.
 
 
 ## Literatura
