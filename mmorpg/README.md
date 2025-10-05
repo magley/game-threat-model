@@ -170,7 +170,7 @@ Mitigacije:
 U nastavku biće detaljno analizirana 3 odabrana napada i njihove mitigacije:
 1. **A41** Botovi za farming
 2. **A42** Client Hooks
-3. **A43** Webhook Replay prilikom kupovine opreme
+3. **A45** Packet Injection
 
 ---
 
@@ -273,85 +273,130 @@ Hook napad omogućava napadaču da manipuliše funkcijama klijenta koje komunici
 - **API / IAT Hooking**:
 promjenom unosa u IAT (Import Address Table), pozivi se preusmjeravaju na drugi kod. Npr. umjesto da aplikacija zove addXP() iz mrežne biblioteke, unos u tablici se promijeni da zove našu funkciju.
 - **Inline hooking / trampolini**: 
-prepisuje prve instrukcije ciljne funkcije jmp instrukcijom ka drugom kodu (hook funkciji).
+prepisuje prve instrukcije ciljne funkcije `jmp` instrukcijom ka drugom kodu (hook funkciji).
 
-U ovom napadu fokus je na inline detour hook, što je najčešći tip korišćen u igrama. Napadač prepisuje prve bajtove funkcije koja poziva API servera i dodaje skok ka svojoj funkciji.
-Napadačeva hook funkcija mijenja vrijednosti argumenata prije nego što poziv stigne do originalne funkcije.
-Drugim riječima: kada klijent pokuša da pošalje xp serveru, hook presretne taj poziv i umjesto xp = 100 postavi xp = 5000.
+Primjer napada bazira se na ubacivanju DLL-a u memoriju procesa igre, čiji kod će da implementira inline hook.
+Kod vezan za injekciju DLL-a je modifikovan i preuzet sa idućeg [linka](https://github.com/tasox/CSharp_Process_Injection/blob/main/01.%20Process_Injection_template_(High%20Level%20Windows%20API)/Program.cs).
 
+```c#
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+class DllInjector
+{
+    [DllImport("kernel32.dll")]
+    static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress,
+        uint dwSize, uint flAllocationType, uint flProtect);
+    [DllImport("kernel32.dll")]
+    static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress,
+        byte[] lpBuffer, uint nSize, out UIntPtr lpNumberOfBytesWritten);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes,
+        uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    public static void Inject(string targetProcess, string dllPath)
+    {
+        var proc = Process.GetProcessesByName(targetProcess)[0];
+        IntPtr hProcess = OpenProcess(0x1F0FFF, false, proc.Id);
+
+        byte[] dllBytes = System.Text.Encoding.ASCII.GetBytes(dllPath);
+        IntPtr allocMem = VirtualAllocEx(hProcess, IntPtr.Zero, (uint)dllBytes.Length, 0x3000, 0x40);
+        WriteProcessMemory(hProcess, allocMem, dllBytes, (uint)dllBytes.Length, out _);
+
+        IntPtr loadLibAddr = GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryA");
+        CreateRemoteThread(hProcess, IntPtr.Zero, 0, loadLibAddr, allocMem, 0, IntPtr.Zero);
+    }
+}
+```
+Objašnjenje koraka prethodnog koda za injekciju DLL-a:
+1. Otvara proces po imenu 
+2. Alocira memoriju u tom procesu
+3. Upisuje putanju do DLL fajla
+4. Pokreće LoadLibraryA() kao remote thread, čime DLL biva učitan u memoriju igre
+
+
+Kod u nastavku objašava kako se kreira inline hook, koji predstavlja najčešći tip hook-a korišten u igrama. Napadač prepisuje prve bajtove funkcije AddXP i dodaje skok ka svojoj funkciji hookAddXP.
+Kod napada je preuzet sa idućeg [linka](https://github.com/alex-ilgayev/injection-hooking-samples/blob/master/sample-injection-hooking-solution/inline-hooking/hook.cpp), pojednostavljen i modifikovan da radi za slučaj mijenjanja xp-a.
+
+```cpp
+
+...
+#define OPCODE_JMP 0xE9
+
+#define DLL_TO_HOOK L"gameclient.dll"
+#define PROC_TO_HOOK "AddXP" 
+
+typedef int(__cdecl *procAddXP_t)(void* player, int delta); // potpis funkcije AddXP(Player*, int)
+procAddXP_t pAddXPReturn = NULL; // trampoline da vrati na original
+
+int __cdecl hookAddXP(void* player, int delta) {
+    // zamijenimo originalnu delta (xp) vrijednost na veći iznos
+    delta = 1000;  
+    ...
+    // poziv ka org funkciji preko trampoline 
+    return pAddXPReturn(player, delta); 
+}
+
+// pojednostavljena fja koja kreira 5-bajtni relativni jmp i trampoline
+void makeHook(void* pProcToHook, void* pHookToRun, void** pReturnAddressAfterHook) {
+    DWORD oldProtect;
+    const SIZE_T cbBytesToCopy = 5; 
+    const SIZE_T cbtrampolineSize = cbBytesToCopy + 16;
+
+    unsigned char* trampoline = (unsigned char*)VirtualAlloc(NULL, cbtrampolineSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+
+    // kopiranje prvih N bajtova originalne funkcije u trampoline
+    memcpy(trampoline, pProcToHook, cbBytesToCopy);
+
+    // dodavanje skoka iz trampoline nazad na original + N
+    unsigned char* pAfterOriginal = (unsigned char*)pProcToHook + cbBytesToCopy;
+
+    // prepisivanje prvih 5 bajtova originalne funkcije JMP-om na hook 
+    unsigned char patch[5];
+    patch[0] = OPCODE_JMP;
+    intptr_t rel = (intptr_t)pHookToRun - ((intptr_t)pProcToHook + 5);
+    *(int32_t*)(patch + 1) = (int32_t)rel;
+
+    // skok na hookAddXP
+    memcpy(pProcToHook, patch, 5);
+}
+
+// inicijalizacija hook-a: ucitavanje modula i instaliranje hook-a
+void hookInit() {
+    HMODULE hMod = GetModuleHandleW(DLL_TO_HOOK); 
+
+    void* pProc = (void*)GetProcAddress(hMod, PROC_TO_HOOK);
+
+    makeHook(pProc, (void*)hookAddXP, (void**)&pAddXPReturn);
+}
+
+```
 
 #### Analiza ranjivosti
-Ranjivost najčešće nastaje kada server previše vjeruje klijentu, odnosno ako server prihvata zahtjeve bez dodatne logike za verifikaciju. Tada napadač može poslati serveru lažni zahtjev.
+Ovakvi napadi su mogući zbog nedostatka određenih mehanizama zaštite procesa i osnovnih sigurnosnih kontrola na nivou sistema. U ranijim verzijama Windows-a ili zastarjelim igrama, ove zaštite često nisu bile uključene, što je omogućavalo da bilo koji proces s dovoljnim privilegijama može otvoriti tuđi proces i upisivati u njegovu memoriju.
 
-Ranjivost se javlja tamo gdje server radi set operacije na osnovu klijentovih vrijednosti, npr:
 
-```c#
-    [HttpPost("/api/report-xp")]
-    public async Task<IActionResult> ReportXp([FromBody] ReportXpRequest req) 
-    {
-        var playerId = GetPlayerIdFromContext(); 
-        var xpReported = req.XpReported; 
-
-        await _db.ExecuteAsync("UPDATE players SET xp = xp + @xp WHERE id = @id",
-            new { xp = xpReported, id = playerId });
-
-        return Ok(new { success = true });
-    }
-```
-Ako klijent može da odredi `xpReported`, onda napadač ima direktan kanal da lažira iznose.
-
-Druga slabost je odsustvo integriteta klijentskog koda: ako klijent ne provjerava svoj hash integrity ili ne prijavljuje promjene, lako se daje prostor za runtime patching.
+Ključne slabosti koje omogućavaju ovakve napade su:
+- Nedostatak ASLR-a (Address Space Layout Randomization): bez ASLR-a, lokacije funkcija i modula u memoriji su predvidljive, pa napadač lako može pronaći adresu funkcije koju želi presresti
+- Isključen DEP (Data Execution Prevention): ako DEP nije aktivan, napadač može izvršavati kod u memorijskim segmentima koji nisu predviđeni za izvršavanje 
+- Slaba verifikacija integriteta klijenta: mnoge igre ne provjeravaju da li su njihove funkcije, moduli ili sekcije koda izmijenjene tokom rada, pa inline hook može ostati aktivan bez detekcije.
 
 #### Bezbjednosne kontrole
-Server treba da računa XP samostalno - klijent mu samo javlja šta je igrač uradio, ne koliko xp-a je stekao.
-To znači da se xp računa na osnovu događaja, ne brojeva iz klijenta. Server treba da bude odgovoran za svu poslovnu logiku. Na taj način, izmjena vrijednosti u klijentu ne mijenja server-side stanje. 
+Prvi sloj odbrane uključuje aktivaciju i pravilnu konfiguraciju sistemskih bezbjednosnih mehanizama. **ASLR** osigurava da se adrese funkcija i modula nasumično raspoređuju pri svakom pokretanju, čime se napadaču otežava predviđanje gdje se u memoriji nalazi ciljna funkcija.
+**DEP** sprječava izvršavanje koda iz memorijskih oblasti koje nisu predviđene za to, čime se onemogućava pokretanje trampolina i shellcode-a u ubrizganim segmentima.
 
-Primjer koda ispod, umjesto korištenja direktnog  *xpReported* sa klijenta, sada prima događaj da je misija završena, provjerava validnost takvog događaja i sam računa rezultat (xp).
+Pored toga, neophodno je sprovesti i periodične provjere integriteta klijenta. Ove provjere se izvršavaju lokalno na računaru igrača i podrazumijevaju verifikaciju digitalnih potpisa i hash vrednosti binarnih datoteka igre, kao i provjeru liste učitanih modula (DLL-ova) tokom rada aplikacije. Ukoliko se otkrije neovlašćena izmjena, sistem može da prijavi pokušaj manipulacije ili da odmah prekine rad.
 
-```c#
-    [HttpPost("/api/quest-complete")]
-    public async Task<IActionResult> CompleteQuest([FromBody] QuestCompleteRequest req)
-    {
-        var playerId = GetPlayerIdFromContext();
-        var questId = req.QuestId;
+Konačno, preporučuje se i instalacija anti-cheat agenata (BattlEye) koji rade na klijentskoj strani i u realnom vremenu prate ponašanje igre. Oni detektuju pokušaje ubrizgavanja koda, modifikacije memorije i izmjene funkcija u dinamički učitanim bibliotekama.
 
-        var quest = await _db.QuerySingleOrDefaultAsync<Quest>("SELECT id, xp_reward FROM quests WHERE id = @q",
-            new { q = questId });
-        if (quest == null)
-            return BadRequest("unknown quest");
-
-        // Check quest state of that plazer
-        var ok = await _db.QuerySingleAsync<bool>(
-            @"SELECT CASE WHEN EXISTS(
-                SELECT 1 FROM player_quests pq 
-                WHERE pq.player_id=@pid AND pq.quest_id=@qid AND pq.status='active'
-                AND ST_DWithin(pq.last_known_pos, (SELECT pos FROM players WHERE id=@pid), @maxDistance)
-            ) THEN true ELSE false END",
-            new { pid = playerId, qid = questId, maxDistance = 50 });
-
-        if (!ok) return Forbid();
-
-        // Atomic actions
-        await _db.ExecuteAsyncInTransactionAsync(async tx =>
-        {
-            await tx.ExecuteAsync("UPDATE players SET xp = xp + @xp WHERE id = @pid",
-                new { xp = quest.XpReward, pid = playerId });
-
-            await tx.ExecuteAsync("UPDATE player_quests SET status='completed' WHERE player_id=@pid AND quest_id=@qid",
-                new { pid = playerId, qid = questId });
-
-            await tx.ExecuteAsync("INSERT INTO xp_log(player_id, xp_delta) VALUES(@pid, @xp)",
-                new { pid = playerId, xp = quest.XpReward });
-        });
-
-        return Ok(new { xpAwarded = quest.XpReward });
-    }
-```
-Ovaj pristup podrazumijeva primjenu autoritativnih servera. 
-
-Pored toga, neophodno je sprovesti i periodične provjere integriteta klijenta. Ove provere se izvršavaju lokalno na računaru igrača i podrazumijevaju verifikaciju digitalnih potpisa i hash vrednosti binarnih datoteka igre, kao i provjeru liste učitanih modula (DLL-ova) tokom rada aplikacije.
-
-Konačno, preporučuje se i instalacija anti-cheat agenata koji rade na klijentskoj strani i u realnom vremenu prate ponašanje igre, učitane module i potencijalne pokušaje modifikacije.
+---
 
 
 ## Literatura
